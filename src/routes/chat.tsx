@@ -7,11 +7,17 @@ import {
   loadConversation,
   deleteConversation,
   streamConversationMessage,
+  getStoredUser,
+  clearAuth,
+  registerUser,
+  loginUser,
   type AssistantTone,
   type ChatMessage,
   type ConversationSummary,
+  type AuthUser,
 } from "@/lib/chat-api";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -43,6 +49,7 @@ import {
   Loader2,
   Bot,
   User,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -147,6 +154,13 @@ function StreamingIndicator() {
 function Index() {
   const queryClient = useQueryClient();
   const [dark, setDark] = useDarkMode();
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authUsername, setAuthUsername] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authPending, setAuthPending] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [tone, setTone] = useState<AssistantTone>("professional");
@@ -158,6 +172,36 @@ function Index() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { copiedId, copy } = useCopyToClipboard();
+
+  useEffect(() => {
+    setAuthUser(getStoredUser());
+    setAuthReady(true);
+  }, []);
+
+  const submitAuth = useCallback(async () => {
+    setAuthError("");
+    setAuthPending(true);
+    try {
+      const auth =
+        authMode === "register"
+          ? await registerUser(authUsername, authPassword)
+          : await loginUser(authUsername, authPassword);
+      setAuthUser(auth.user);
+      setAuthUsername("");
+      setAuthPassword("");
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Authentication failed.");
+    } finally {
+      setAuthPending(false);
+    }
+  }, [authMode, authPassword, authUsername]);
+
+  const logout = useCallback(() => {
+    clearAuth();
+    setAuthUser(null);
+    setActiveId(null);
+    setMessages([]);
+  }, []);
 
   // ---- Data queries ----
 
@@ -302,6 +346,93 @@ function Index() {
   // Render
   // ---------------------------------------------------------------------------
 
+  if (!authReady) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#07111f] text-white">
+        <Loader2 className="h-6 w-6 animate-spin text-cyan-300" />
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#07111f] px-5 text-white">
+        <div className="pointer-events-none fixed inset-0 overflow-hidden">
+          <div className="absolute left-1/4 top-1/4 h-96 w-96 rounded-full bg-cyan-400/10 blur-[120px]" />
+          <div className="absolute right-1/4 top-1/3 h-96 w-96 rounded-full bg-blue-500/10 blur-[120px]" />
+        </div>
+        <div className="relative w-full max-w-md rounded-[28px] border border-white/10 bg-[#0b1728]/95 p-6 shadow-2xl sm:p-8">
+          <div className="mb-8 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-300/20 bg-cyan-300/10">
+              <Bot className="h-6 w-6 text-cyan-300" />
+            </div>
+            <h1 className="mt-4 text-2xl font-semibold">Welcome to Nexa AI</h1>
+            <p className="mt-2 text-sm text-slate-400">
+              {authMode === "login"
+                ? "Sign in to continue your conversations."
+                : "Create an account to save your conversations."}
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <Input
+              value={authUsername}
+              onChange={(event) => setAuthUsername(event.target.value)}
+              placeholder="Username"
+              autoComplete="username"
+              className="h-12 border-white/10 bg-white/[0.05] text-white placeholder:text-slate-500"
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void submitAuth();
+              }}
+            />
+            <Input
+              type="password"
+              value={authPassword}
+              onChange={(event) => setAuthPassword(event.target.value)}
+              placeholder="Password"
+              autoComplete={authMode === "login" ? "current-password" : "new-password"}
+              className="h-12 border-white/10 bg-white/[0.05] text-white placeholder:text-slate-500"
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void submitAuth();
+              }}
+            />
+            {authError && (
+              <p className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-sm text-red-200">
+                {authError}
+              </p>
+            )}
+            <Button
+              className="h-12 w-full bg-cyan-300 text-slate-950 hover:bg-cyan-200"
+              onClick={() => void submitAuth()}
+              disabled={authPending}
+            >
+              {authPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : authMode === "login" ? (
+                "Sign in"
+              ) : (
+                "Create account"
+              )}
+            </Button>
+          </div>
+
+          <button
+            type="button"
+            className="mt-5 w-full text-center text-sm text-slate-400 transition hover:text-cyan-300"
+            onClick={() => {
+              setAuthMode((mode) => (mode === "login" ? "register" : "login"));
+              setAuthError("");
+            }}
+          >
+            {authMode === "login"
+              ? "New here? Create an account"
+              : "Already have an account? Sign in"}
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <TooltipProvider delayDuration={300}>
       <div className="flex h-screen bg-background text-foreground">
@@ -423,6 +554,22 @@ function Index() {
                 )}
             </div>
           </ScrollArea>
+          <div className="flex items-center justify-between border-t border-border p-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10">
+                <User className="h-4 w-4 text-primary" />
+              </div>
+              <span className="truncate text-sm font-medium">{authUser.username}</span>
+            </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={logout}>
+                  <LogOut className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Sign out</TooltipContent>
+            </Tooltip>
+          </div>
         </aside>
 
         {/* ========== MAIN CHAT AREA ========== */}

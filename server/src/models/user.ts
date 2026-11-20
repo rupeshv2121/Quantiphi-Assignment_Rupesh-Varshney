@@ -1,7 +1,11 @@
 import { randomBytes, scryptSync, createHmac, timingSafeEqual } from "node:crypto";
 import { Schema, model, type InferSchemaType } from "mongoose";
 
-const JWT_SECRET = process.env.JWT_SECRET || "nexa-ai-secure-secret-key-quantiphi-2026";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET is not configured on the server.");
+}
+const AUTH_SECRET: string = JWT_SECRET;
 
 const userSchema = new Schema(
   {
@@ -47,7 +51,7 @@ export function createAuthToken(userId: string, username: string): string {
     exp: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
   };
   const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const signature = createHmac("sha256", JWT_SECRET).update(payloadB64).digest("base64url");
+  const signature = createHmac("sha256", AUTH_SECRET).update(payloadB64).digest("base64url");
   return `${payloadB64}.${signature}`;
 }
 
@@ -56,7 +60,7 @@ export function verifyAuthToken(token: string): AuthPayload | null {
     const [payloadB64, signature] = token.split(".");
     if (!payloadB64 || !signature) return null;
 
-    const expectedSignature = createHmac("sha256", JWT_SECRET).update(payloadB64).digest("base64url");
+    const expectedSignature = createHmac("sha256", AUTH_SECRET).update(payloadB64).digest("base64url");
     if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
       return null;
     }

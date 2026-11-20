@@ -17,7 +17,58 @@ export interface ConversationSummary {
   messages?: ChatMessage[];
 }
 
-const apiBaseUrl = (import.meta.env.VITE_API_URL?.trim() || "http://localhost:4000").replace(/\/$/, "");
+export interface AuthUser {
+  id: string;
+  username: string;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: AuthUser;
+}
+
+const apiBaseUrl = (
+  import.meta.env.VITE_API_URL?.trim() ||
+  (import.meta.env.PROD ? "" : "http://localhost:4000")
+).replace(/\/$/, "");
+
+const TOKEN_KEY = "nexa_auth_token";
+const USER_KEY = "nexa_auth_user";
+
+export function getStoredToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function getStoredUser(): AuthUser | null {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem(USER_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as AuthUser;
+  } catch {
+    return null;
+  }
+}
+
+export function saveAuth(auth: AuthResponse): void {
+  localStorage.setItem(TOKEN_KEY, auth.token);
+  localStorage.setItem(USER_KEY, JSON.stringify(auth.user));
+}
+
+export function clearAuth(): void {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+function getAuthHeaders(): Record<string, string> {
+  const token = getStoredToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
 
 async function responseError(response: Response): Promise<Error> {
   try {
@@ -36,8 +87,34 @@ async function responseError(response: Response): Promise<Error> {
   return new Error(`The chat service returned ${response.status}.`);
 }
 
+export async function registerUser(username: string, password: string): Promise<AuthResponse> {
+  const response = await fetch(`${apiBaseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!response.ok) throw await responseError(response);
+  const data = (await response.json()) as AuthResponse;
+  saveAuth(data);
+  return data;
+}
+
+export async function loginUser(username: string, password: string): Promise<AuthResponse> {
+  const response = await fetch(`${apiBaseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!response.ok) throw await responseError(response);
+  const data = (await response.json()) as AuthResponse;
+  saveAuth(data);
+  return data;
+}
+
 export async function listConversations(): Promise<ConversationSummary[]> {
-  const response = await fetch(`${apiBaseUrl}/api/conversations`);
+  const response = await fetch(`${apiBaseUrl}/api/conversations`, {
+    headers: getAuthHeaders(),
+  });
   if (!response.ok) throw await responseError(response);
   return (await response.json()) as ConversationSummary[];
 }
@@ -47,7 +124,7 @@ export async function createConversation(
 ): Promise<ConversationSummary> {
   const response = await fetch(`${apiBaseUrl}/api/conversations`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: getAuthHeaders(),
     body: JSON.stringify({ tone }),
   });
   if (!response.ok) throw await responseError(response);
@@ -55,7 +132,9 @@ export async function createConversation(
 }
 
 export async function loadConversation(id: string): Promise<ConversationSummary> {
-  const response = await fetch(`${apiBaseUrl}/api/conversations/${encodeURIComponent(id)}`);
+  const response = await fetch(`${apiBaseUrl}/api/conversations/${encodeURIComponent(id)}`, {
+    headers: getAuthHeaders(),
+  });
   if (!response.ok) throw await responseError(response);
   return (await response.json()) as ConversationSummary;
 }
@@ -63,6 +142,7 @@ export async function loadConversation(id: string): Promise<ConversationSummary>
 export async function deleteConversation(id: string): Promise<void> {
   const response = await fetch(`${apiBaseUrl}/api/conversations/${encodeURIComponent(id)}`, {
     method: "DELETE",
+    headers: getAuthHeaders(),
   });
   if (!response.ok) throw await responseError(response);
 }
@@ -75,11 +155,14 @@ export async function streamConversationMessage(options: {
   signal: AbortSignal;
   onDelta: (text: string) => void;
 }): Promise<void> {
+  const headers = getAuthHeaders();
+  headers["Accept"] = "text/event-stream";
+
   const response = await fetch(
     `${apiBaseUrl}/api/conversations/${encodeURIComponent(options.conversationId)}/${options.regenerate ? "regenerate" : "messages"}`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      headers,
       body: JSON.stringify({ prompt: options.prompt, tone: options.tone }),
       signal: options.signal,
     },

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { optionalAuth } from "../middleware/auth.js";
+import { requireAuth } from "../middleware/auth.js";
 
 import {
   createConversation,
@@ -11,7 +11,7 @@ import {
 } from "../controllers/conversations.js";
 
 const router = Router();
-router.use(optionalAuth);
+router.use(requireAuth);
 
 router.get("/", (request, response, next) => {
   void listConversations(request, response).catch(next);

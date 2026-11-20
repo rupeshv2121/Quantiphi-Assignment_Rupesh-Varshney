@@ -20,6 +20,8 @@
    - [2. Frontend Setup](#2-frontend-setup)
 8. [Running Tests](#-running-tests)
 9. [Viva & Technical Discussion Notes](#-viva--technical-discussion-notes)
+10. [Authentication](#-authentication)
+11. [Vercel Deployment](#-vercel-deployment)
 
 ---
 
@@ -76,6 +78,11 @@ In addition to the mandatory problem statement requirements, two extra features 
 
 3. *(Bonus)* **Response Regeneration**:
    - Re-runs the last user turn under the currently active tone without re-typing the prompt.
+
+4. **Basic Authentication**:
+   - Username/password registration and login.
+   - Passwords are hashed using Node.js `scrypt`.
+   - Signed bearer sessions protect conversation APIs and isolate conversation history by account.
 
 ---
 
@@ -308,3 +315,52 @@ During evaluation and technical review, the following core design choices can be
 
 4. **Edge-Safe Architecture**:
    - The frontend builds with Vite and Nitro into Cloudflare/Node-compatible static assets with full TypeScript typing.
+
+---
+
+## 🔐 Authentication
+
+The chat route requires a signed-in account. Registration and login are handled by:
+
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `GET /api/auth/me`
+
+Passwords are salted and hashed with Node.js `scrypt`. Authentication tokens expire after seven days and are sent as `Authorization: Bearer <token>` headers. Set `JWT_SECRET` to a long random value in every environment.
+
+---
+
+## ▲ Vercel Deployment
+
+Deploy the frontend and backend as two Vercel projects.
+
+### Frontend project
+
+In the Vercel project settings:
+
+- **Root Directory:** repository root
+- **Framework Preset:** Vite
+- **Install Command:** `bun install`
+- **Build Command:** `bun run build`
+- **Environment Variable:** `VITE_API_URL=https://your-backend-project.vercel.app`
+
+### Backend project
+
+In the Vercel project settings:
+
+- **Root Directory:** `server`
+- **Framework Preset:** Other
+- **Install Command:** `npm install`
+- **Build Command:** `npm run build`
+
+Add these environment variables:
+
+| Variable | Required value |
+|---|---|
+| `MONGODB_URI` | MongoDB Atlas connection string |
+| `GROQ_API_KEY` | Groq API key |
+| `GROQ_MODEL` | `openai/gpt-oss-20b` or another model available to the account |
+| `JWT_SECRET` | Long random secret, unique to production |
+| `CORS_ORIGIN` | Exact frontend origin, such as `https://your-app.vercel.app` |
+
+The backend includes `server/api/[...path].ts` for Vercel serverless routing and `server/vercel.json` for project setup. Redeploy after every environment-variable change.

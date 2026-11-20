@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { pathToFileURL } from "node:url";
 
 import cors from "cors";
 import express from "express";
@@ -7,7 +8,7 @@ import mongoose from "mongoose";
 import { conversationRouter } from "./routes/conversations.js";
 import { authRouter } from "./routes/auth.js";
 
-const app = express();
+export const app = express();
 const port = Number(process.env.PORT || 4000);
 const corsOrigins = (process.env.CORS_ORIGIN || "http://localhost:8080,http://localhost:5173")
   .split(",")
@@ -32,7 +33,7 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
   response.status(500).json({ error: "The chat service could not complete that request." });
 });
 
-async function start(): Promise<void> {
+export async function start(): Promise<void> {
   const mongoUri = process.env.MONGODB_URI;
   if (!mongoUri) throw new Error("MONGODB_URI is required. Copy server/.env.example to server/.env and configure it.");
 
@@ -42,7 +43,9 @@ async function start(): Promise<void> {
   });
 }
 
-start().catch((error: unknown) => {
-  console.error("Could not start Nexa AI API:", error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  start().catch((error: unknown) => {
+    console.error("Could not start Nexa AI API:", error);
+    process.exitCode = 1;
+  });
+}
