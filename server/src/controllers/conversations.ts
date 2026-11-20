@@ -19,8 +19,13 @@ function getText(value: unknown): string | null {
     : null;
 }
 
-export async function listConversations(_request: Request, response: Response): Promise<void> {
-  const conversations = await Conversation.find()
+function getUserId(request: Request): string {
+  return request.user?.id || "anonymous";
+}
+
+export async function listConversations(request: Request, response: Response): Promise<void> {
+  const userId = getUserId(request);
+  const conversations = await Conversation.find({ userId })
     .sort({ updatedAt: -1 })
     .select("title tone createdAt updatedAt")
     .lean();
@@ -36,8 +41,9 @@ export async function listConversations(_request: Request, response: Response): 
 }
 
 export async function createConversation(request: Request, response: Response): Promise<void> {
+  const userId = getUserId(request);
   const tone = getTone(request.body?.tone, "professional");
-  const conversation = await Conversation.create({ title: "New chat", tone, messages: [] });
+  const conversation = await Conversation.create({ userId, title: "New chat", tone, messages: [] });
   response.status(201).json({
     id: conversation.id,
     title: conversation.title,
@@ -53,7 +59,8 @@ export async function getConversation(request: Request, response: Response): Pro
     response.status(400).json({ error: "That conversation ID is not valid." });
     return;
   }
-  const conversation = await Conversation.findById(request.params.id);
+  const userId = getUserId(request);
+  const conversation = await Conversation.findOne({ _id: request.params.id, userId });
   if (!conversation) {
     response.status(404).json({ error: "Conversation not found." });
     return;
@@ -78,7 +85,8 @@ export async function deleteConversation(request: Request, response: Response): 
     response.status(400).json({ error: "That conversation ID is not valid." });
     return;
   }
-  const deleted = await Conversation.findByIdAndDelete(request.params.id);
+  const userId = getUserId(request);
+  const deleted = await Conversation.findOneAndDelete({ _id: request.params.id, userId });
   if (!deleted) {
     response.status(404).json({ error: "Conversation not found." });
     return;
@@ -96,7 +104,8 @@ async function streamReply(
     return;
   }
 
-  const conversation = await Conversation.findById(request.params.id);
+  const userId = getUserId(request);
+  const conversation = await Conversation.findOne({ _id: request.params.id, userId });
   if (!conversation) {
     response.status(404).json({ error: "Conversation not found." });
     return;

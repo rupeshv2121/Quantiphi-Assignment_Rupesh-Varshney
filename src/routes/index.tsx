@@ -1,688 +1,239 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
-  listConversations,
-  createConversation,
-  loadConversation,
-  deleteConversation,
-  streamConversationMessage,
-  type AssistantTone,
-  type ChatMessage,
-  type ConversationSummary,
-} from "@/lib/chat-api";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { Badge } from "@/components/ui/badge";
-import {
-  Send,
-  Plus,
-  Trash2,
-  RefreshCw,
-  Copy,
-  Check,
-  Moon,
-  Sun,
-  MessageSquare,
-  PanelLeftClose,
-  PanelLeft,
-  Loader2,
+  ArrowRight,
   Bot,
-  User,
+  Braces,
+  Check,
+  MessageSquareText,
+  ShieldCheck,
+  Sparkles,
+  Zap,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { useState } from "react";
 
 export const Route = createFileRoute("/")({
-  component: Index,
+  component: LandingPage,
+  head: () => ({
+    meta: [
+      { title: "Nexa AI — Intelligent conversations, instantly" },
+      {
+        name: "description",
+        content:
+          "Meet Nexa AI, a fast and thoughtful chat assistant for clear answers, creative ideas, and productive conversations.",
+      },
+    ],
+  }),
 });
 
-// ---------------------------------------------------------------------------
-// Dark-mode helpers
-// ---------------------------------------------------------------------------
+const experiences = [
+  {
+    label: "Write",
+    icon: MessageSquareText,
+    prompt: "Turn a rough idea into a polished project brief.",
+    response:
+      "A strong project brief needs a clear objective, target audience, key deliverables, success metrics, and an agreed timeline.",
+  },
+  {
+    label: "Plan",
+    icon: Braces,
+    prompt: "Create a launch plan for a new mobile app.",
+    response:
+      "Start with beta feedback, then align onboarding, campaign assets, store listing, and support readiness in focused weekly sprints.",
+  },
+  {
+    label: "Learn",
+    icon: Sparkles,
+    prompt: "Explain RAG in simple, practical terms.",
+    response:
+      "Retrieval-Augmented Generation lets an AI find relevant source material first, then use that context to produce a grounded answer.",
+  },
+];
 
-function useDarkMode() {
-  const [dark, setDark] = useState(() => {
-    if (typeof window === "undefined") return false;
-    const stored = localStorage.getItem("nexa-dark-mode");
-    if (stored !== null) return stored === "true";
-    return window.matchMedia("(prefers-color-scheme: dark)").matches;
-  });
-
-  useEffect(() => {
-    const root = document.documentElement;
-    if (dark) {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
-    }
-    localStorage.setItem("nexa-dark-mode", String(dark));
-  }, [dark]);
-
-  return [dark, setDark] as const;
-}
-
-// ---------------------------------------------------------------------------
-// Timestamp formatter
-// ---------------------------------------------------------------------------
-
-function formatTime(iso: string) {
-  const d = new Date(iso);
-  const now = new Date();
-  const isToday = d.toDateString() === now.toDateString();
-  if (isToday) {
-    return d.toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  }
-  return d.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Copy-to-clipboard hook
-// ---------------------------------------------------------------------------
-
-function useCopyToClipboard() {
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
-
-  const copy = useCallback((text: string, id: string) => {
-    void navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(() => setCopiedId(null), 2000);
-  }, []);
-
-  return { copiedId, copy };
-}
-
-// ---------------------------------------------------------------------------
-// Shimmer / streaming indicator
-// ---------------------------------------------------------------------------
-
-function StreamingIndicator() {
-  return (
-    <div className="flex items-center gap-1.5 text-muted-foreground text-xs py-1">
-      <span className="inline-block h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
-      <span
-        className="inline-block h-1.5 w-1.5 rounded-full bg-current animate-pulse"
-        style={{ animationDelay: "0.2s" }}
-      />
-      <span
-        className="inline-block h-1.5 w-1.5 rounded-full bg-current animate-pulse"
-        style={{ animationDelay: "0.4s" }}
-      />
-      <span className="ml-1">Thinking…</span>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
-
-function Index() {
-  const queryClient = useQueryClient();
-  const [dark, setDark] = useDarkMode();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [tone, setTone] = useState<AssistantTone>("professional");
-  const [inputValue, setInputValue] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [streamingText, setStreamingText] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const abortRef = useRef<AbortController | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { copiedId, copy } = useCopyToClipboard();
-
-  // ---- Data queries ----
-
-  const conversationsQuery = useQuery({
-    queryKey: ["conversations"],
-    queryFn: listConversations,
-    refetchInterval: 30_000,
-  });
-
-  const conversationDetailQuery = useQuery({
-    queryKey: ["conversation", activeId],
-    queryFn: () => loadConversation(activeId!),
-    enabled: activeId !== null,
-  });
-
-  // Sync messages from loaded conversation
-  useEffect(() => {
-    if (conversationDetailQuery.data?.messages) {
-      setMessages(conversationDetailQuery.data.messages);
-    }
-  }, [conversationDetailQuery.data]);
-
-  // Sync tone from loaded conversation
-  useEffect(() => {
-    if (conversationDetailQuery.data?.tone) {
-      setTone(conversationDetailQuery.data.tone);
-    }
-  }, [conversationDetailQuery.data]);
-
-  // ---- Mutations ----
-
-  const createMutation = useMutation({
-    mutationFn: (t: AssistantTone) => createConversation(t),
-    onSuccess: (data) => {
-      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      setActiveId(data.id);
-      setMessages(data.messages ?? []);
-      setTone(data.tone);
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteConversation(id),
-    onSuccess: (_data, id) => {
-      void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      if (activeId === id) {
-        setActiveId(null);
-        setMessages([]);
-      }
-    },
-  });
-
-  // ---- Auto-scroll ----
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingText]);
-
-  // ---- Send / stream handler ----
-
-  const sendMessage = useCallback(
-    async (regenerate = false) => {
-      if (!activeId) return;
-      if (!regenerate && !inputValue.trim()) return;
-
-      const prompt = regenerate ? undefined : inputValue.trim();
-
-      if (!regenerate && prompt) {
-        const userMsg: ChatMessage = {
-          id: `temp-${Date.now()}`,
-          role: "user",
-          content: prompt,
-          createdAt: new Date().toISOString(),
-        };
-        setMessages((prev) => [...prev, userMsg]);
-        setInputValue("");
-      }
-
-      setIsStreaming(true);
-      setStreamingText("");
-
-      const controller = new AbortController();
-      abortRef.current = controller;
-
-      try {
-        await streamConversationMessage({
-          conversationId: activeId,
-          prompt,
-          tone,
-          regenerate,
-          signal: controller.signal,
-          onDelta: (text) => {
-            setStreamingText((prev) => prev + text);
-          },
-        });
-      } catch (err) {
-        if (!(err instanceof DOMException && err.name === "AbortError")) {
-          console.error("Streaming error:", err);
-        }
-      } finally {
-        setIsStreaming(false);
-        abortRef.current = null;
-        // Reload conversation to get the final persisted messages
-        void queryClient.invalidateQueries({
-          queryKey: ["conversation", activeId],
-        });
-        void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-        setStreamingText("");
-      }
-    },
-    [activeId, inputValue, tone, queryClient],
-  );
-
-  // ---- Keyboard handling ----
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (!isStreaming && inputValue.trim()) {
-        void sendMessage(false);
-      }
-    }
-  };
-
-  // ---- Select conversation ----
-
-  const selectConversation = (conv: ConversationSummary) => {
-    if (activeId === conv.id) return;
-    setActiveId(conv.id);
-  };
-
-  // ---- Sorted conversations ----
-
-  const sortedConversations = [
-    ...(conversationsQuery.data ?? []),
-  ].sort(
-    (a, b) =>
-      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-  );
-
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
+function LandingPage() {
+  const [activeExperience, setActiveExperience] = useState(0);
+  const experience = experiences[activeExperience];
 
   return (
-    <TooltipProvider delayDuration={300}>
-      <div className="flex h-screen bg-background text-foreground">
-        {/* ========== SIDEBAR ========== */}
-        <aside
-          className={cn(
-            "flex flex-col border-r border-border bg-muted/30 transition-all duration-200",
-            sidebarOpen ? "w-72" : "w-0 overflow-hidden",
-          )}
-        >
-          {/* Sidebar header */}
-          <div className="flex items-center justify-between p-3 border-b border-border">
-            <div className="flex items-center gap-2">
-              <Bot className="h-5 w-5 text-primary" />
-              <span className="font-semibold text-sm">Nexa AI</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={() => setDark((d) => !d)}
-                  >
-                    {dark ? (
-                      <Sun className="h-4 w-4" />
-                    ) : (
-                      <Moon className="h-4 w-4" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {dark ? "Light mode" : "Dark mode"}
-                </TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={() => setSidebarOpen(false)}
-                  >
-                    <PanelLeftClose className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Close sidebar</TooltipContent>
-              </Tooltip>
-            </div>
-          </div>
-
-          {/* New chat button */}
-          <div className="p-3">
-            <Button
-              className="w-full justify-start gap-2"
-              onClick={() => createMutation.mutate(tone)}
-              disabled={createMutation.isPending}
-            >
-              {createMutation.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Plus className="h-4 w-4" />
-              )}
-              New Chat
-            </Button>
-          </div>
-
-          {/* Conversation list */}
-          <ScrollArea className="flex-1">
-            <div className="px-2 pb-2 space-y-1">
-              {conversationsQuery.isLoading && (
-                <div className="flex items-center justify-center py-8 text-muted-foreground text-sm">
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  Loading…
-                </div>
-              )}
-              {sortedConversations.map((conv) => (
-                <div
-                  key={conv.id}
-                  className={cn(
-                    "group flex items-center gap-2 rounded-md px-2 py-2 cursor-pointer text-sm transition-colors",
-                    activeId === conv.id
-                      ? "bg-primary/10 text-primary font-medium"
-                      : "hover:bg-muted text-foreground",
-                  )}
-                  onClick={() => selectConversation(conv)}
-                >
-                  <MessageSquare className="h-4 w-4 shrink-0 opacity-60" />
-                  <span className="flex-1 truncate">
-                    {conv.title || "Untitled"}
-                  </span>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteMutation.mutate(conv.id);
-                        }}
-                        disabled={deleteMutation.isPending}
-                      >
-                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Delete</TooltipContent>
-                  </Tooltip>
-                </div>
-              ))}
-              {!conversationsQuery.isLoading &&
-                sortedConversations.length === 0 && (
-                  <div className="text-center py-8 text-muted-foreground text-xs">
-                    No conversations yet.
-                    <br />
-                    Click "New Chat" to start.
-                  </div>
-                )}
-            </div>
-          </ScrollArea>
-        </aside>
-
-        {/* ========== MAIN CHAT AREA ========== */}
-        <main className="flex flex-1 flex-col min-w-0">
-          {/* Top bar */}
-          <header className="flex items-center gap-2 border-b border-border px-4 py-2 shrink-0">
-            {!sidebarOpen && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => setSidebarOpen(true)}
-                  >
-                    <PanelLeft className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Open sidebar</TooltipContent>
-              </Tooltip>
-            )}
-
-            {!sidebarOpen && (
-              <div className="flex items-center gap-2 mr-2">
-                <Bot className="h-5 w-5 text-primary" />
-                <span className="font-semibold text-sm">Nexa AI</span>
-              </div>
-            )}
-
-            {/* Tone selector */}
-            {activeId && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Vibe:</span>
-                <Select
-                  value={tone}
-                  onValueChange={(v) => setTone(v as AssistantTone)}
-                >
-                  <SelectTrigger className="h-8 w-[140px] text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="professional">
-                      💼 Professional
-                    </SelectItem>
-                    <SelectItem value="casual">😊 Casual</SelectItem>
-                    <SelectItem value="concise">⚡ Concise</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Badge variant="secondary" className="text-[10px]">
-                  Vibe Check
-                </Badge>
-              </div>
-            )}
-
-            <div className="flex-1" />
-
-            {/* Dark mode toggle (also visible when sidebar closed) */}
-            {!sidebarOpen && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => setDark((d) => !d)}
-                  >
-                    {dark ? (
-                      <Sun className="h-4 w-4" />
-                    ) : (
-                      <Moon className="h-4 w-4" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {dark ? "Light mode" : "Dark mode"}
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </header>
-
-          {/* Messages area */}
-          {!activeId ? (
-            /* ---- Empty state ---- */
-            <div className="flex flex-1 items-center justify-center">
-              <div className="text-center space-y-4 max-w-sm px-4">
-                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-                  <Bot className="h-8 w-8 text-primary" />
-                </div>
-                <h2 className="text-xl font-semibold">Welcome to Nexa AI</h2>
-                <p className="text-sm text-muted-foreground">
-                  Start a new conversation to chat with the AI assistant. Choose
-                  your preferred tone and start typing!
-                </p>
-                <Button
-                  onClick={() => createMutation.mutate(tone)}
-                  disabled={createMutation.isPending}
-                  className="gap-2"
-                >
-                  {createMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Plus className="h-4 w-4" />
-                  )}
-                  Start New Chat
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <>
-              {/* ---- Scrollable messages ---- */}
-              <ScrollArea className="flex-1">
-                <div className="max-w-3xl mx-auto px-4 py-4 space-y-4">
-                  {conversationDetailQuery.isLoading && (
-                    <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      Loading messages…
-                    </div>
-                  )}
-
-                  {messages.map((msg) => (
-                    <div
-                      key={msg.id}
-                      className={cn(
-                        "flex gap-3",
-                        msg.role === "user" ? "justify-end" : "justify-start",
-                      )}
-                    >
-                      {msg.role === "assistant" && (
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted">
-                          <Bot className="h-4 w-4 text-muted-foreground" />
-                        </div>
-                      )}
-
-                      <div
-                        className={cn(
-                          "group relative max-w-[80%] rounded-2xl px-4 py-2.5",
-                          msg.role === "user"
-                            ? "bg-primary text-primary-foreground rounded-br-md"
-                            : "bg-muted text-foreground rounded-bl-md",
-                        )}
-                      >
-                        <p className="text-sm whitespace-pre-wrap break-words">
-                          {msg.content}
-                        </p>
-                        <div
-                          className={cn(
-                            "mt-1 flex items-center gap-2 text-[10px]",
-                            msg.role === "user"
-                              ? "text-primary-foreground/60 justify-end"
-                              : "text-muted-foreground",
-                          )}
-                        >
-                          <span>{formatTime(msg.createdAt)}</span>
-                        </div>
-
-                        {/* Action buttons for assistant messages */}
-                        {msg.role === "assistant" && (
-                          <div className="absolute -bottom-3 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="outline"
-                                  size="icon"
-                                  className="h-6 w-6 bg-background shadow-sm"
-                                  onClick={() => copy(msg.content, msg.id)}
-                                >
-                                  {copiedId === msg.id ? (
-                                    <Check className="h-3 w-3 text-green-500" />
-                                  ) : (
-                                    <Copy className="h-3 w-3" />
-                                  )}
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {copiedId === msg.id ? "Copied!" : "Copy"}
-                              </TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="outline"
-                                  size="icon"
-                                  className="h-6 w-6 bg-background shadow-sm"
-                                  onClick={() => void sendMessage(true)}
-                                  disabled={isStreaming}
-                                >
-                                  <RefreshCw className="h-3 w-3" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>Regenerate</TooltipContent>
-                            </Tooltip>
-                          </div>
-                        )}
-                      </div>
-
-                      {msg.role === "user" && (
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20">
-                          <User className="h-4 w-4 text-primary" />
-                        </div>
-                      )}
-                    </div>
-                  ))}
-
-                  {/* Streaming assistant message */}
-                  {isStreaming && (
-                    <div className="flex gap-3 justify-start">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted">
-                        <Bot className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                      <div className="max-w-[80%] rounded-2xl rounded-bl-md bg-muted text-foreground px-4 py-2.5">
-                        {streamingText ? (
-                          <p className="text-sm whitespace-pre-wrap break-words">
-                            {streamingText}
-                            <span className="inline-block w-1.5 h-4 bg-primary/60 animate-pulse ml-0.5 align-text-bottom rounded-sm" />
-                          </p>
-                        ) : (
-                          <StreamingIndicator />
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  <div ref={messagesEndRef} />
-                </div>
-              </ScrollArea>
-
-              {/* ---- Input area ---- */}
-              <div className="border-t border-border p-4 shrink-0">
-                <div className="max-w-3xl mx-auto flex gap-2 items-end">
-                  <Textarea
-                    ref={textareaRef}
-                    placeholder="Type a message… (Shift+Enter for newline)"
-                    className="min-h-[44px] max-h-[160px] resize-none flex-1"
-                    rows={1}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    disabled={isStreaming}
-                  />
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        size="icon"
-                        className="h-[44px] w-[44px] shrink-0"
-                        disabled={
-                          isStreaming || !inputValue.trim() || !activeId
-                        }
-                        onClick={() => void sendMessage(false)}
-                      >
-                        {isStreaming ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Send className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Send message</TooltipContent>
-                  </Tooltip>
-                </div>
-              </div>
-            </>
-          )}
-        </main>
+    <main className="min-h-screen overflow-hidden bg-[#07111f] text-white">
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute -left-32 top-20 h-96 w-96 rounded-full bg-cyan-400/10 blur-[110px]" />
+        <div className="absolute -right-32 top-[-8rem] h-[30rem] w-[30rem] rounded-full bg-blue-500/10 blur-[130px]" />
+        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/15 to-transparent" />
       </div>
-    </TooltipProvider>
+
+      <nav className="relative z-10 mx-auto flex h-20 max-w-7xl items-center justify-between px-5 sm:px-8">
+        <Link to="/" className="flex items-center gap-2.5" aria-label="Nexa AI home">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-300/20 bg-cyan-300/10">
+            <Bot className="h-5 w-5 text-cyan-300" />
+          </div>
+          <span className="text-lg font-semibold tracking-tight">Nexa AI</span>
+        </Link>
+
+        <div className="hidden items-center gap-8 text-sm text-slate-300 md:flex">
+          <a href="#features" className="transition-colors hover:text-white">
+            Features
+          </a>
+          <a href="#demo" className="transition-colors hover:text-white">
+            Experience
+          </a>
+        </div>
+
+        <Link
+          to="/chat"
+          className="inline-flex h-10 items-center gap-2 rounded-full border border-white/10 bg-white px-4 text-sm font-semibold text-slate-950 transition hover:bg-cyan-50"
+        >
+          Open chat
+          <ArrowRight className="h-4 w-4" />
+        </Link>
+      </nav>
+
+      <section className="relative z-10 mx-auto grid max-w-7xl items-center gap-12 px-5 pb-20 pt-14 sm:px-8 lg:min-h-[620px] lg:grid-cols-[0.95fr_1.05fr] lg:pb-24 lg:pt-10">
+        <div>
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-cyan-300/15 bg-cyan-300/[0.07] px-3 py-1.5 text-xs font-medium text-cyan-200">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-300 opacity-60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-cyan-300" />
+            </span>
+            Powered by Groq
+          </div>
+
+          <h1 className="max-w-2xl text-5xl font-semibold leading-[1.02] tracking-[-0.045em] sm:text-6xl lg:text-[72px]">
+            Think bigger.
+            <br />
+            <span className="bg-gradient-to-r from-cyan-300 via-sky-300 to-blue-400 bg-clip-text text-transparent">
+              Chat smarter.
+            </span>
+          </h1>
+
+          <p className="mt-6 max-w-xl text-base leading-7 text-slate-300 sm:text-lg">
+            A fast, thoughtful AI workspace for turning questions into clear answers,
+            rough ideas into strong plans, and busy work into momentum.
+          </p>
+
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <Link
+              to="/chat"
+              className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-cyan-300 px-6 text-sm font-bold text-slate-950 shadow-[0_12px_40px_rgba(103,232,249,0.16)] transition hover:-translate-y-0.5 hover:bg-cyan-200"
+            >
+              Start a conversation
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+            <a
+              href="#demo"
+              className="inline-flex h-12 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] px-6 text-sm font-semibold text-white transition hover:bg-white/[0.08]"
+            >
+              Explore the experience
+            </a>
+          </div>
+
+          <div className="mt-8 flex items-center gap-5 text-xs text-slate-400">
+            <span className="flex items-center gap-1.5">
+              <Check className="h-3.5 w-3.5 text-cyan-300" /> Fast streaming
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Check className="h-3.5 w-3.5 text-cyan-300" /> Saved history
+            </span>
+            <span className="hidden items-center gap-1.5 sm:flex">
+              <Check className="h-3.5 w-3.5 text-cyan-300" /> Tone control
+            </span>
+          </div>
+        </div>
+
+        <div id="demo" className="relative">
+          <div className="absolute inset-8 rounded-full bg-cyan-400/[0.08] blur-3xl" />
+          <div className="relative mx-auto max-w-[560px] rounded-[28px] border border-white/10 bg-[#0b1728]/95 p-3 shadow-[0_30px_100px_rgba(0,0,0,0.38)]">
+            <div className="flex items-center justify-between px-3 py-2">
+              <div className="flex items-center gap-2">
+                <div className="h-2.5 w-2.5 rounded-full bg-cyan-300" />
+                <span className="text-sm font-semibold">Nexa AI</span>
+              </div>
+              <div className="rounded-full border border-white/10 px-3 py-1 text-[10px] text-slate-400">
+                Professional
+              </div>
+            </div>
+
+            <div className="mt-2 rounded-[20px] border border-white/[0.07] bg-[#07111f] p-4 sm:p-5">
+              <div className="mb-4 flex gap-2 overflow-x-auto">
+                {experiences.map((item, index) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.label}
+                      type="button"
+                      onClick={() => setActiveExperience(index)}
+                      className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                        activeExperience === index
+                          ? "bg-cyan-300 text-slate-950"
+                          : "border border-white/[0.08] text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex justify-end">
+                  <div className="max-w-[82%] rounded-2xl rounded-br-md bg-cyan-300 px-4 py-3 text-sm font-medium text-slate-950">
+                    {experience.prompt}
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-cyan-300/20 bg-cyan-300/10">
+                    <Bot className="h-4 w-4 text-cyan-300" />
+                  </div>
+                  <div className="rounded-2xl rounded-bl-md border border-white/[0.07] bg-white/[0.04] px-4 py-3 text-sm leading-6 text-slate-200">
+                    {experience.response}
+                  </div>
+                </div>
+              </div>
+
+              <Link
+                to="/chat"
+                className="mt-5 flex h-12 items-center justify-between rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 text-sm text-slate-400 transition hover:border-cyan-300/20 hover:bg-white/[0.05]"
+              >
+                Ask Nexa anything…
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-300 text-slate-950">
+                  <ArrowRight className="h-4 w-4" />
+                </span>
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="features" className="relative z-10 border-t border-white/[0.07] bg-white/[0.018]">
+        <div className="mx-auto grid max-w-7xl gap-px px-5 py-10 sm:px-8 md:grid-cols-3">
+          {[
+            {
+              icon: Zap,
+              title: "Real-time answers",
+              text: "Watch responses arrive smoothly with live streaming.",
+            },
+            {
+              icon: Sparkles,
+              title: "Your preferred tone",
+              text: "Switch between professional, casual, or concise.",
+            },
+            {
+              icon: ShieldCheck,
+              title: "Focused workspace",
+              text: "Keep your chats organized and easy to revisit.",
+            },
+          ].map((feature) => (
+            <div
+              key={feature.title}
+              className="border-b border-white/[0.07] py-6 md:border-b-0 md:border-r md:px-8 md:first:pl-0 md:last:border-r-0"
+            >
+              <feature.icon className="mb-4 h-5 w-5 text-cyan-300" />
+              <h2 className="text-sm font-semibold">{feature.title}</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-400">{feature.text}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+    </main>
   );
 }

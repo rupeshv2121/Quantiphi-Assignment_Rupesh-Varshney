@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { optionalAuth } from "../middleware/auth.js";
 
 import {
   createConversation,
@@ -10,6 +11,7 @@ import {
 } from "../controllers/conversations.js";
 
 const router = Router();
+router.use(optionalAuth);
 
 router.get("/", (request, response, next) => {
   void listConversations(request, response).catch(next);

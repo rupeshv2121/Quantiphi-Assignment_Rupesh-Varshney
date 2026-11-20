@@ -14,6 +14,7 @@ const messageSchema = new Schema(
 
 const conversationSchema = new Schema(
   {
+    userId: { type: String, required: true, default: "anonymous", index: true },
     title: { type: String, required: true, maxlength: 120, default: "New chat" },
     tone: {
       type: String,
