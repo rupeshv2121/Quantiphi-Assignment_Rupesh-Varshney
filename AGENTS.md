@@ -28,3 +28,5 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+Keep the assessment's standalone Express/MongoDB service in `server/`; the React app calls it through a centralized HTTP client so the hosted UI and locally run backend remain separate.
