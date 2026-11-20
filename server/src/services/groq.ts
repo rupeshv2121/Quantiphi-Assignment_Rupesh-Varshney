@@ -1,14 +1,14 @@
-import OpenAI from "openai";
+import Groq from "groq-sdk";
 
 import type { AssistantTone } from "./tone.js";
 import { getToneInstruction } from "./tone.js";
 
 export type PromptTurn = { role: "user" | "assistant"; content: string };
 
-export function getOpenAIClient(): OpenAI {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error("OPENAI_API_KEY is not configured on the server.");
-  return new OpenAI({ apiKey });
+export function getGroqClient(): Groq {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error("GROQ_API_KEY is not configured on the server.");
+  return new Groq({ apiKey });
 }
 
 export async function* streamAssistantReply(
@@ -16,10 +16,10 @@ export async function* streamAssistantReply(
   tone: AssistantTone,
   signal: AbortSignal,
 ): AsyncGenerator<string> {
-  const client = getOpenAIClient();
+  const client = getGroqClient();
   const stream = await client.chat.completions.create(
     {
-      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+      model: process.env.GROQ_MODEL || "openai/gpt-oss-20b",
       stream: true,
       messages: [
         { role: "system", content: getToneInstruction(tone) },

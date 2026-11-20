@@ -2,11 +2,11 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 
 import { Conversation } from "../models/conversation.js";
-import { streamAssistantReply, type PromptTurn } from "../services/openai.js";
+import { streamAssistantReply, type PromptTurn } from "../services/groq.js";
 import { isAssistantTone, type AssistantTone } from "../services/tone.js";
 
-function validId(value: string): boolean {
-  return mongoose.isValidObjectId(value);
+function validId(value: string | string[] | undefined): boolean {
+  return typeof value === "string" && mongoose.isValidObjectId(value);
 }
 
 function getTone(value: unknown, fallback: AssistantTone): AssistantTone {
@@ -159,7 +159,7 @@ async function streamReply(
   } catch (error) {
     if (controller.signal.aborted) return;
     const message = error instanceof Error ? error.message : "The AI response could not be completed.";
-    console.error("OpenAI stream failed:", error);
+    console.error("Groq stream failed:", error);
     response.write(`data: ${JSON.stringify({ type: "error", message })}\n\n`);
     response.end();
   }
